@@ -1,23 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import useSWR, { mutate } from "swr";
-import { MODEL_OPTIONS, DEFAULT_ENABLED_MODELS } from "@open-inspect/shared";
-import { MODEL_PREFERENCES_KEY } from "@/hooks/use-enabled-models";
+import { mutate } from "swr";
+import { MODEL_PREFERENCES_KEY, useModelOptions } from "@/hooks/use-enabled-models";
+import type { ModelCategory } from "@open-inspect/shared";
 import { Button } from "@/components/ui/button";
 
 export function ModelsSettings() {
-  const { data, isLoading: loading } = useSWR<{ enabledModels: string[] }>(MODEL_PREFERENCES_KEY);
-  const [enabledModels, setEnabledModels] = useState<Set<string>>(new Set(DEFAULT_ENABLED_MODELS));
+  const {
+    modelOptions,
+    defaultEnabledModels,
+    loading: optionsLoading,
+  } = useModelOptions();
+
+  const [enabledModels, setEnabledModels] = useState<Set<string>>(new Set());
   const [initialized, setInitialized] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [dirty, setDirty] = useState(false);
 
-  // Sync SWR data into local state once on initial load
-  if (data?.enabledModels && !initialized) {
-    setEnabledModels(new Set(data.enabledModels));
+  if (!initialized && !optionsLoading && defaultEnabledModels.length > 0) {
+    setEnabledModels(new Set(defaultEnabledModels));
     setInitialized(true);
   }
 
@@ -37,7 +41,7 @@ export function ModelsSettings() {
     setSuccess("");
   };
 
-  const toggleCategory = (category: (typeof MODEL_OPTIONS)[number], enable: boolean) => {
+  const toggleCategory = (category: ModelCategory, enable: boolean) => {
     setEnabledModels((prev) => {
       const next = new Set(prev);
       for (const model of category.models) {
@@ -82,7 +86,7 @@ export function ModelsSettings() {
     }
   };
 
-  if (loading) {
+  if (optionsLoading) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
         <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
@@ -111,7 +115,7 @@ export function ModelsSettings() {
       )}
 
       <div className="space-y-6">
-        {MODEL_OPTIONS.map((group) => {
+        {modelOptions.map((group) => {
           const allEnabled = group.models.every((m) => enabledModels.has(m.id));
 
           return (

@@ -1,28 +1,48 @@
 import { useMemo } from "react";
 import useSWR from "swr";
-import { MODEL_OPTIONS, DEFAULT_ENABLED_MODELS, type ModelCategory } from "@open-inspect/shared";
+import type { ModelCategory } from "@open-inspect/shared";
 
 export const MODEL_PREFERENCES_KEY = "/api/model-preferences";
+export const MODEL_OPTIONS_KEY = "/api/model-options";
 
 interface ModelPreferencesResponse {
   enabledModels: string[];
 }
 
+interface ModelOptionsResponse {
+  modelOptions: ModelCategory[];
+  defaultEnabledModels: string[];
+}
+
+export function useModelOptions() {
+  const { data, isLoading } = useSWR<ModelOptionsResponse>(MODEL_OPTIONS_KEY);
+  return {
+    modelOptions: data?.modelOptions ?? [],
+    defaultEnabledModels: data?.defaultEnabledModels ?? [],
+    loading: isLoading,
+  };
+}
+
 export function useEnabledModels() {
-  const { data, isLoading } = useSWR<ModelPreferencesResponse>(MODEL_PREFERENCES_KEY);
+  const { data, isLoading: prefsLoading } = useSWR<ModelPreferencesResponse>(MODEL_PREFERENCES_KEY);
+  const { modelOptions, defaultEnabledModels, loading: optionsLoading } = useModelOptions();
+
+  const isLoading = prefsLoading || optionsLoading;
 
   const enabledModels = useMemo(
-    () => data?.enabledModels ?? (isLoading ? [] : (DEFAULT_ENABLED_MODELS as string[])),
-    [data?.enabledModels, isLoading]
+    () => data?.enabledModels ?? (isLoading ? [] : defaultEnabledModels),
+    [data?.enabledModels, isLoading, defaultEnabledModels],
   );
 
   const enabledModelOptions: ModelCategory[] = useMemo(() => {
     const enabledSet = new Set(enabledModels);
-    return MODEL_OPTIONS.map((group) => ({
-      ...group,
-      models: group.models.filter((m) => enabledSet.has(m.id)),
-    })).filter((group) => group.models.length > 0);
-  }, [enabledModels]);
+    return modelOptions
+      .map((group) => ({
+        ...group,
+        models: group.models.filter((m) => enabledSet.has(m.id)),
+      }))
+      .filter((group) => group.models.length > 0);
+  }, [enabledModels, modelOptions]);
 
   return { enabledModels, enabledModelOptions, loading: isLoading };
 }

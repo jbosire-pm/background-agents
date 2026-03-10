@@ -4,10 +4,15 @@
 
 import { MODEL_OPTIONS, normalizeModelId } from "@open-inspect/shared";
 
-// Build a lookup map once at module level
-const MODEL_DISPLAY_NAMES = new Map<string, string>(
-  MODEL_OPTIONS.flatMap((g) => g.models.map((m) => [m.id, m.name]))
-);
+function getDisplayName(modelId: string): string | undefined {
+  const normalized = normalizeModelId(modelId);
+  for (const group of MODEL_OPTIONS) {
+    for (const m of group.models) {
+      if (m.id === normalized) return m.name;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Format model ID to display name.
@@ -16,7 +21,7 @@ const MODEL_DISPLAY_NAMES = new Map<string, string>(
  */
 export function formatModelName(modelId: string): string {
   if (!modelId) return "Unknown Model";
-  return MODEL_DISPLAY_NAMES.get(normalizeModelId(modelId)) ?? modelId;
+  return getDisplayName(modelId) ?? modelId;
 }
 
 /**
@@ -25,7 +30,7 @@ export function formatModelName(modelId: string): string {
  */
 export function formatModelNameLower(modelId: string): string {
   if (!modelId) return "unknown model";
-  return (MODEL_DISPLAY_NAMES.get(normalizeModelId(modelId)) ?? modelId).toLowerCase();
+  return (getDisplayName(modelId) ?? modelId).toLowerCase();
 }
 
 /**

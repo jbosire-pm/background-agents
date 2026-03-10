@@ -12,6 +12,7 @@ import os
 import time
 import uuid
 
+import jwt
 import docker
 from docker.errors import NotFound
 
@@ -20,6 +21,39 @@ from .config import config
 log = logging.getLogger("sandbox-manager")
 
 client = docker.from_env()
+
+
+def _generate_github_app_token() -> str | None:
+  """Generate a GitHub App installation access token for git clone."""
+  app_id = config.GITHUB_APP_ID
+  private_key = config.GITHUB_APP_PRIVATE_KEY
+  installation_id = config.GITHUB_APP_INSTALLATION_ID
+
+  if not app_id or not private_key or not installation_id:
+    log.warning("GitHub App credentials not configured, git clone will fail")
+    return None
+
+  try:
+    import httpx
+
+    now = int(time.time())
+    payload = {"iat": now - 60, "exp": now + 600, "iss": app_id}
+    token = jwt.encode(payload, private_key, algorithm="RS256")
+
+    resp = httpx.post(
+      f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+      headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "open-inspect-sandbox-manager",
+      },
+      timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["token"]
+  except Exception as e:
+    log.error("Failed to generate GitHub App token: %s", e)
+    return None
 
 
 def create_sandbox(
@@ -72,6 +106,11 @@ def create_sandbox(
   opencode_user_config = os.getenv("OPENCODE_USER_CONFIG")
   if opencode_user_config:
     env["OPENCODE_USER_CONFIG"] = opencode_user_config
+
+  github_token = _generate_github_app_token()
+  if github_token:
+    env["VCS_CLONE_TOKEN"] = github_token
+    env["GITHUB_APP_TOKEN"] = github_token
 
   if branch:
     env["BRANCH"] = branch

@@ -67,7 +67,7 @@ const sessionNamespace = new NodeSessionNamespace(pool, {
         content: prompt.content,
         model: prompt.model,
         reasoningEffort: prompt.reasoningEffort,
-        author: prompt.authorId,
+        author: { userId: prompt.authorId },
       }));
     } else {
       broadcastToClients(sessionId, { type: "sandbox_status", status: "spawning" });
@@ -297,7 +297,7 @@ function handleSandboxConnection(sessionId: string, ws: WsWebSocket): void {
             content: pending.content,
             model: pending.model,
             reasoningEffort: pending.reasoningEffort,
-            author: pending.authorId,
+            author: { userId: pending.authorId },
           }));
         }
         return;

@@ -27,7 +27,9 @@ import { handleRequest } from "./router";
 import { PostgresDatabaseAdapter } from "./adapters/node/postgres-database";
 import { RedisKeyValueStore } from "./adapters/node/redis-kv";
 import type { Env } from "./types";
-import { NodeExecutionContext } from "@open-inspect/shared";
+import { NodeExecutionContext, loadCustomModelsFromEnv } from "@open-inspect/shared";
+
+loadCustomModelsFromEnv();
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
 

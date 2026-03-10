@@ -4,9 +4,13 @@
  * Cloudflare Workers entry point with Durable Objects for session management.
  */
 
+import { loadCustomModelsFromEnv } from "@open-inspect/shared";
+
 import { handleRequest } from "./router";
 import { createLogger } from "./logger";
 import type { Env } from "./types";
+
+loadCustomModelsFromEnv();
 
 const logger = createLogger("worker");
 

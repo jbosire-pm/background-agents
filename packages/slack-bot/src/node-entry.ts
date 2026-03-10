@@ -7,8 +7,11 @@
  * Usage: node --import tsx packages/slack-bot/src/node-entry.ts
  */
 
+import { loadCustomModelsFromEnv } from "@open-inspect/shared";
 import { serve } from "@hono/node-server";
 import app from "./index";
+
+loadCustomModelsFromEnv();
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 

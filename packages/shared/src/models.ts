@@ -3,11 +3,13 @@
  *
  * All packages import model-related types and validation from here
  * to ensure consistent behavior across control plane, web UI, and Slack bot.
+ *
+ * Custom models can be added at runtime via registerCustomModels() or
+ * loadCustomModelsFromEnv() without modifying this file.
  */
 
 /**
- * Valid model names supported by the system.
- * All models use "provider/model" format.
+ * Built-in model names. Custom models are appended at runtime.
  */
 export const VALID_MODELS = [
   "anthropic/claude-haiku-4-5",
@@ -26,6 +28,8 @@ export const VALID_MODELS = [
 ] as const;
 
 export type ValidModel = (typeof VALID_MODELS)[number];
+
+const _customModelIds = new Set<string>();
 
 /**
  * Default model to use when none specified or invalid.
@@ -50,7 +54,7 @@ export interface ModelReasoningConfig {
  * Per-model reasoning configuration.
  * Models not listed here do not support reasoning controls.
  */
-export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningConfig>> = {
+export const MODEL_REASONING_CONFIG: Record<string, ModelReasoningConfig> = {
   "anthropic/claude-haiku-4-5": { efforts: ["high", "max"], default: "max" },
   "anthropic/claude-sonnet-4-5": { efforts: ["high", "max"], default: "max" },
   "anthropic/claude-sonnet-4-6": { efforts: ["low", "medium", "high", "max"], default: "high" },
@@ -64,7 +68,7 @@ export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningCo
 };
 
 export interface ModelDisplayInfo {
-  id: ValidModel;
+  id: string;
   name: string;
   description: string;
 }
@@ -76,6 +80,7 @@ export interface ModelCategory {
 
 /**
  * Model options grouped by provider, for use in UI dropdowns.
+ * Custom models are appended by registerCustomModels().
  */
 export const MODEL_OPTIONS: ModelCategory[] = [
   {
@@ -136,7 +141,7 @@ export const MODEL_OPTIONS: ModelCategory[] = [
  * Models enabled by default when no preferences are stored.
  * Excludes zen models which must be opted into via settings.
  */
-export const DEFAULT_ENABLED_MODELS: ValidModel[] = [
+export const DEFAULT_ENABLED_MODELS: string[] = [
   "anthropic/claude-haiku-4-5",
   "anthropic/claude-sonnet-4-5",
   "anthropic/claude-sonnet-4-6",
@@ -148,6 +153,78 @@ export const DEFAULT_ENABLED_MODELS: ValidModel[] = [
   "openai/gpt-5.3-codex",
   "openai/gpt-5.3-codex-spark",
 ];
+
+// === Custom model registration ===
+
+export interface CustomModelEntry {
+  id: string;
+  name: string;
+  description: string;
+  category?: string;
+  reasoning?: ModelReasoningConfig;
+  enabledByDefault?: boolean;
+}
+
+/**
+ * Register custom models at runtime.
+ *
+ * Appends models to the validation set, UI dropdowns, and optionally
+ * the default-enabled list. Safe to call multiple times; duplicates
+ * are skipped.
+ */
+export function registerCustomModels(models: CustomModelEntry[]): void {
+  for (const m of models) {
+    if (_customModelIds.has(m.id)) continue;
+    if ((VALID_MODELS as readonly string[]).includes(m.id)) continue;
+
+    _customModelIds.add(m.id);
+
+    if (m.reasoning) {
+      MODEL_REASONING_CONFIG[m.id] = m.reasoning;
+    }
+
+    if (m.enabledByDefault) {
+      DEFAULT_ENABLED_MODELS.push(m.id);
+    }
+
+    const categoryName = m.category ?? "Custom";
+    const existing = MODEL_OPTIONS.find((c) => c.category === categoryName);
+    const displayInfo: ModelDisplayInfo = {
+      id: m.id,
+      name: m.name,
+      description: m.description,
+    };
+
+    if (existing) {
+      existing.models.push(displayInfo);
+    } else {
+      MODEL_OPTIONS.push({ category: categoryName, models: [displayInfo] });
+    }
+  }
+}
+
+/**
+ * Load custom models from the EXTRA_MODELS environment variable.
+ *
+ * Expected format: JSON array of CustomModelEntry objects.
+ *
+ * @example
+ * EXTRA_MODELS='[{"id":"openwebui/pm-opus-4.6","name":"PM - Opus 4.6","description":"Open WebUI Bedrock","category":"Open WebUI"}]'
+ */
+export function loadCustomModelsFromEnv(): void {
+  const raw =
+    typeof process !== "undefined" && process.env ? process.env.EXTRA_MODELS : undefined;
+  if (!raw) return;
+
+  try {
+    const models = JSON.parse(raw) as CustomModelEntry[];
+    if (Array.isArray(models)) {
+      registerCustomModels(models);
+    }
+  } catch {
+    // Silently ignore malformed JSON so startup isn't blocked
+  }
+}
 
 // === Normalization ===
 
@@ -166,10 +243,13 @@ export function normalizeModelId(modelId: string): string {
 
 /**
  * Check if a model name is valid.
- * Accepts both prefixed ("anthropic/claude-haiku-4-5") and bare ("claude-haiku-4-5") formats.
+ * Checks both built-in and custom-registered models.
  */
-export function isValidModel(model: string): model is ValidModel {
-  return VALID_MODELS.includes(normalizeModelId(model) as ValidModel);
+export function isValidModel(model: string): boolean {
+  const normalized = normalizeModelId(model);
+  return (
+    (VALID_MODELS as readonly string[]).includes(normalized) || _customModelIds.has(normalized)
+  );
 }
 
 /**
@@ -185,7 +265,7 @@ export function supportsReasoning(model: string): boolean {
 export function getReasoningConfig(model: string): ModelReasoningConfig | undefined {
   const normalized = normalizeModelId(model);
   if (!isValidModel(normalized)) return undefined;
-  return MODEL_REASONING_CONFIG[normalized as ValidModel];
+  return MODEL_REASONING_CONFIG[normalized];
 }
 
 /**
@@ -220,7 +300,6 @@ export function extractProviderAndModel(modelId: string): { provider: string; mo
     const [provider, ...modelParts] = normalized.split("/");
     return { provider, model: modelParts.join("/") };
   }
-  // Fallback for truly unknown models
   return { provider: "anthropic", model: normalized };
 }
 
@@ -228,9 +307,9 @@ export function extractProviderAndModel(modelId: string): { provider: string; mo
  * Get a valid model or fall back to default.
  * Accepts both prefixed and bare formats; always returns canonical prefixed format.
  */
-export function getValidModelOrDefault(model: string | undefined | null): ValidModel {
+export function getValidModelOrDefault(model: string | undefined | null): string {
   if (model && isValidModel(model)) {
-    return normalizeModelId(model) as ValidModel;
+    return normalizeModelId(model);
   }
   return DEFAULT_MODEL;
 }

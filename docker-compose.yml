@@ -66,6 +66,7 @@ services:
       MODAL_WORKSPACE: ${MODAL_WORKSPACE}
       WORKER_URL: http://control-plane:8787
       WEB_APP_URL: http://localhost:3000
+      EXTRA_MODELS: ${EXTRA_MODELS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
@@ -91,6 +92,7 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       INTERNAL_CALLBACK_SECRET: ${INTERNAL_CALLBACK_SECRET}
+      EXTRA_MODELS: ${EXTRA_MODELS:-}
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS}
       ALLOWED_USERS: ${ALLOWED_USERS}
     depends_on:

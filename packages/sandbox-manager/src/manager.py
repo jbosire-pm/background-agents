@@ -8,6 +8,7 @@ instead of Modal. Exposes the same API contract the control plane expects.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 
@@ -41,6 +42,17 @@ def create_sandbox(
   timeout = timeout_seconds or config.SANDBOX_TIMEOUT_SECONDS
   image = repo_image_id or config.SANDBOX_IMAGE
 
+  import json as _json
+
+  session_config = _json.dumps({
+    "session_id": session_id,
+    "repo_owner": repo_owner,
+    "repo_name": repo_name,
+    "branch": branch,
+    "provider": provider,
+    "model": model,
+  })
+
   env = {
     "SESSION_ID": session_id,
     "SANDBOX_ID": sandbox_id,
@@ -50,11 +62,16 @@ def create_sandbox(
     "SANDBOX_AUTH_TOKEN": sandbox_auth_token,
     "MODEL": model,
     "PROVIDER": provider,
+    "SESSION_CONFIG": session_config,
     "GITHUB_APP_ID": config.GITHUB_APP_ID,
     "GITHUB_APP_PRIVATE_KEY": config.GITHUB_APP_PRIVATE_KEY,
     "GITHUB_APP_INSTALLATION_ID": config.GITHUB_APP_INSTALLATION_ID,
     "ANTHROPIC_API_KEY": config.ANTHROPIC_API_KEY,
   }
+
+  opencode_user_config = os.getenv("OPENCODE_USER_CONFIG")
+  if opencode_user_config:
+    env["OPENCODE_USER_CONFIG"] = opencode_user_config
 
   if branch:
     env["BRANCH"] = branch
@@ -77,7 +94,6 @@ def create_sandbox(
       "open-inspect.sandbox-id": sandbox_id,
       "open-inspect.type": "sandbox",
     },
-    stop_timeout=timeout,
   )
 
   log.info("Created sandbox container %s for session %s", container.short_id, session_id)

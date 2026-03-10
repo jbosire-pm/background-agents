@@ -54,13 +54,95 @@ const reposCache = new RedisKeyValueStore(redis);
 
 // ─── Session Manager ─────────────────────────────────────────────────────────
 
-const sessionNamespace = new NodeSessionNamespace(pool);
+const sessionNamespace = new NodeSessionNamespace(pool, {
+  onPrompt: (sessionId, prompt) => {
+    pendingPrompts.set(sessionId, prompt);
+
+    const existingSandbox = sandboxWebSockets.get(sessionId);
+    if (existingSandbox && existingSandbox.readyState === 1) {
+      pendingPrompts.delete(sessionId);
+      existingSandbox.send(JSON.stringify({
+        type: "prompt",
+        messageId: prompt.messageId,
+        content: prompt.content,
+        model: prompt.model,
+        reasoningEffort: prompt.reasoningEffort,
+        author: prompt.authorId,
+      }));
+    } else {
+      broadcastToClients(sessionId, { type: "sandbox_status", status: "spawning" });
+      spawnSandboxForSession(sessionId, prompt.authToken).catch((err) => {
+        console.error(`[session:${sessionId}] Failed to spawn sandbox:`, err);
+      });
+    }
+  },
+});
 
 // ─── WebSocket Server ────────────────────────────────────────────────────────
 
 import type { WebSocket as WsWebSocket } from "ws";
 
-const sessionWebSockets = new Map<string, Set<WsWebSocket>>();
+const clientWebSockets = new Map<string, Set<WsWebSocket>>();
+const sandboxWebSockets = new Map<string, WsWebSocket>();
+const pendingPrompts = new Map<string, { messageId: string; content: string; model: string; reasoningEffort?: string; authorId: string }>();
+
+function broadcastToClients(sessionId: string, message: unknown): void {
+  const clients = clientWebSockets.get(sessionId);
+  if (!clients) return;
+  const data = typeof message === "string" ? message : JSON.stringify(message);
+  for (const ws of clients) {
+    if (ws.readyState === 1) ws.send(data);
+  }
+}
+
+async function spawnSandboxForSession(sessionId: string, authToken: string): Promise<void> {
+  const sandboxManagerUrl = process.env.SANDBOX_MANAGER_URL || "http://sandbox-manager:8000";
+
+  const session = await pool.query(
+    "SELECT repo_owner, repo_name, model, reasoning_effort, base_branch FROM session_state WHERE id = $1",
+    [sessionId],
+  );
+  if (session.rows.length === 0) return;
+
+  const s = session.rows[0];
+  const controlPlaneUrl = process.env.WORKER_URL || `http://control-plane:${PORT}`;
+
+  try {
+    const { extractProviderAndModel, generateInternalToken } = await import("@open-inspect/shared");
+    const { provider, model } = extractProviderAndModel(s.model as string);
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const secret = process.env.INTERNAL_CALLBACK_SECRET;
+    if (secret) {
+      const token = await generateInternalToken(secret);
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(`${sandboxManagerUrl}/api/create`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        session_id: sessionId,
+        sandbox_id: `sandbox-${sessionId.slice(0, 8)}`,
+        repo_owner: s.repo_owner,
+        repo_name: s.repo_name,
+        control_plane_url: controlPlaneUrl,
+        sandbox_auth_token: authToken,
+        model,
+        provider,
+        branch: s.base_branch,
+      }),
+    });
+
+    if (!res.ok) {
+      console.error(`[session:${sessionId}] Sandbox creation failed: ${res.status}`);
+    } else {
+      console.log(`[session:${sessionId}] Sandbox spawning...`);
+    }
+  } catch (err) {
+    console.error(`[session:${sessionId}] Sandbox creation error:`, err);
+  }
+}
 
 // ─── Build Env ───────────────────────────────────────────────────────────────
 
@@ -142,37 +224,111 @@ server.on("upgrade", (request: http.IncomingMessage, socket: Duplex, head: Buffe
   }
 
   const sessionId = match[1];
+  const isSandbox = url.searchParams.get("type") === "sandbox";
 
   wss.handleUpgrade(request, socket, head, (ws) => {
-    if (!sessionWebSockets.has(sessionId)) {
-      sessionWebSockets.set(sessionId, new Set());
+    if (isSandbox) {
+      handleSandboxConnection(sessionId, ws);
+    } else {
+      handleClientConnection(sessionId, ws);
     }
-    sessionWebSockets.get(sessionId)!.add(ws);
-
-    ws.on("close", () => {
-      const clients = sessionWebSockets.get(sessionId);
-      if (clients) {
-        clients.delete(ws);
-        if (clients.size === 0) {
-          sessionWebSockets.delete(sessionId);
-        }
-      }
-    });
-
-    ws.on("message", (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === "ping") {
-          ws.send(JSON.stringify({ type: "pong" }));
-        }
-      } catch {
-        // Ignore malformed messages
-      }
-    });
-
-    ws.send(JSON.stringify({ type: "connected", sessionId }));
   });
 });
+
+function handleClientConnection(sessionId: string, ws: WsWebSocket): void {
+  if (!clientWebSockets.has(sessionId)) {
+    clientWebSockets.set(sessionId, new Set());
+  }
+  clientWebSockets.get(sessionId)!.add(ws);
+
+  ws.on("close", () => {
+    const clients = clientWebSockets.get(sessionId);
+    if (clients) {
+      clients.delete(ws);
+      if (clients.size === 0) clientWebSockets.delete(sessionId);
+    }
+  });
+
+  ws.on("message", (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "ping") {
+        ws.send(JSON.stringify({ type: "pong" }));
+      }
+      if (msg.type === "prompt") {
+        const sandboxWs = sandboxWebSockets.get(sessionId);
+        if (sandboxWs && sandboxWs.readyState === 1) {
+          sandboxWs.send(JSON.stringify(msg));
+        }
+      }
+    } catch {
+      // Ignore malformed messages
+    }
+  });
+
+  ws.send(JSON.stringify({ type: "connected", sessionId }));
+}
+
+function handleSandboxConnection(sessionId: string, ws: WsWebSocket): void {
+  console.log(`[ws] Sandbox connected for session ${sessionId}`);
+  sandboxWebSockets.set(sessionId, ws);
+  broadcastToClients(sessionId, { type: "sandbox_status", status: "connecting" });
+
+  ws.on("close", () => {
+    sandboxWebSockets.delete(sessionId);
+    broadcastToClients(sessionId, { type: "sandbox_status", status: "stopped" });
+    console.log(`[ws] Sandbox disconnected for session ${sessionId}`);
+  });
+
+  ws.on("message", async (data) => {
+    try {
+      const event = JSON.parse(data.toString());
+
+      if (event.type === "ready") {
+        broadcastToClients(sessionId, { type: "sandbox_ready", sandboxId: event.sandboxId });
+        broadcastToClients(sessionId, { type: "sandbox_status", status: "ready" });
+
+        const pending = pendingPrompts.get(sessionId);
+        if (pending) {
+          pendingPrompts.delete(sessionId);
+          ws.send(JSON.stringify({
+            type: "prompt",
+            messageId: pending.messageId,
+            content: pending.content,
+            model: pending.model,
+            reasoningEffort: pending.reasoningEffort,
+            author: pending.authorId,
+          }));
+        }
+        return;
+      }
+
+      if (event.type === "heartbeat") return;
+
+      broadcastToClients(sessionId, { type: "sandbox_event", event });
+
+      if (event.type === "execution_complete") {
+        const messageId = event.messageId;
+        if (messageId) {
+          await pool.query(
+            "UPDATE session_messages SET status = $1, completed_at = $2 WHERE id = $3",
+            [event.success ? "completed" : "failed", Date.now(), messageId],
+          );
+        }
+      }
+
+      if (event.type === "token" && event.messageId) {
+        await pool.query(
+          `INSERT INTO session_events (id, session_id, type, data, message_id, created_at)
+           VALUES ($1, $2, 'token', $3, $4, $5)`,
+          [crypto.randomUUID().slice(0, 12), sessionId, JSON.stringify(event), event.messageId, Date.now()],
+        );
+      }
+    } catch {
+      // Ignore malformed messages
+    }
+  });
+}
 
 // ─── Auto-enable custom models in saved preferences ─────────────────────────
 

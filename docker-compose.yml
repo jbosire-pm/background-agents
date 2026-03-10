@@ -1,4 +1,13 @@
 services:
+  # ─── Sandbox Image (built first, used by sandbox-manager to spawn containers) ─
+
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: packages/sandbox-image/Dockerfile
+    image: open-inspect-sandbox:latest
+    entrypoint: ["echo", "Sandbox image built successfully"]
+
   # ─── Infrastructure ──────────────────────────────────────────────────────────
 
   postgres:
@@ -66,6 +75,7 @@ services:
       MODAL_WORKSPACE: ${MODAL_WORKSPACE}
       WORKER_URL: http://control-plane:8787
       WEB_APP_URL: http://localhost:3000
+      SANDBOX_MANAGER_URL: http://sandbox-manager:8000
       EXTRA_MODELS: ${EXTRA_MODELS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
@@ -116,10 +126,11 @@ services:
       GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENCODE_USER_CONFIG: ${OPENCODE_USER_CONFIG:-}
-      SANDBOX_NETWORK: open-inspect_default
+      SANDBOX_NETWORK: background-agents_default
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       - control-plane
+      - sandbox-image
 
   # ─── Bots (optional) ────────────────────────────────────────────────────────
 

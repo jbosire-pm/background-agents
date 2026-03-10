@@ -9,6 +9,17 @@ type PgPool = {
   query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
 };
 
+export interface SessionManagerCallbacks {
+  onPrompt?: (sessionId: string, prompt: {
+    messageId: string;
+    content: string;
+    model: string;
+    reasoningEffort?: string;
+    authorId: string;
+    authToken: string;
+  }) => void;
+}
+
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -20,6 +31,7 @@ class NodeSessionStub {
   constructor(
     private readonly sessionName: string,
     private readonly pool: PgPool,
+    private readonly callbacks: SessionManagerCallbacks,
   ) {}
 
   async fetch(request: Request): Promise<Response> {
@@ -192,6 +204,23 @@ class NodeSessionStub {
       `UPDATE session_state SET status = 'active', updated_at = $2 WHERE id = $1`,
       [this.sessionName, now],
     );
+
+    const sessionRow = await this.pool.query(
+      "SELECT model, reasoning_effort FROM session_state WHERE id = $1",
+      [this.sessionName],
+    );
+    const model = (body.model as string) ?? sessionRow.rows[0]?.model ?? "anthropic/claude-sonnet-4-6";
+    const reasoningEffort = (body.reasoningEffort as string) ?? sessionRow.rows[0]?.reasoning_effort ?? undefined;
+    const authToken = crypto.randomUUID();
+
+    this.callbacks.onPrompt?.(this.sessionName, {
+      messageId,
+      content: body.content as string,
+      model: model as string,
+      reasoningEffort: reasoningEffort as string | undefined,
+      authorId: (body.authorId as string) ?? "anonymous",
+      authToken,
+    });
 
     return jsonResponse({ messageId });
   }
@@ -380,13 +409,16 @@ class NodeSessionId {
 }
 
 export class NodeSessionNamespace {
-  constructor(private readonly pool: PgPool) {}
+  constructor(
+    private readonly pool: PgPool,
+    private readonly callbacks: SessionManagerCallbacks = {},
+  ) {}
 
   idFromName(name: string): NodeSessionId {
     return new NodeSessionId(name);
   }
 
   get(id: NodeSessionId): NodeSessionStub {
-    return new NodeSessionStub(id.name, this.pool);
+    return new NodeSessionStub(id.name, this.pool, this.callbacks);
   }
 }

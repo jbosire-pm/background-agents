@@ -27,7 +27,11 @@ import { handleRequest } from "./router";
 import { PostgresDatabaseAdapter } from "./adapters/node/postgres-database";
 import { RedisKeyValueStore } from "./adapters/node/redis-kv";
 import type { Env } from "./types";
-import { NodeExecutionContext, loadCustomModelsFromEnv } from "@open-inspect/shared";
+import {
+  NodeExecutionContext,
+  loadCustomModelsFromEnv,
+  type CustomModelEntry,
+} from "@open-inspect/shared";
 
 loadCustomModelsFromEnv();
 
@@ -164,6 +168,49 @@ server.on("upgrade", (request: http.IncomingMessage, socket: Duplex, head: Buffe
     ws.send(JSON.stringify({ type: "connected", sessionId }));
   });
 });
+
+// ─── Auto-enable custom models in saved preferences ─────────────────────────
+
+async function syncCustomModelPreferences(): Promise<void> {
+  const raw = process.env.EXTRA_MODELS;
+  if (!raw) return;
+
+  let custom: CustomModelEntry[];
+  try {
+    custom = JSON.parse(raw);
+    if (!Array.isArray(custom)) return;
+  } catch {
+    return;
+  }
+
+  const toAdd = custom.filter((m) => m.enabledByDefault).map((m) => m.id);
+  if (toAdd.length === 0) return;
+
+  try {
+    const result = await pool.query(
+      "SELECT enabled_models FROM model_preferences WHERE id = 'global'",
+    );
+
+    if (result.rows.length === 0) return;
+
+    const current: string[] = JSON.parse(result.rows[0].enabled_models as string);
+    const currentSet = new Set(current);
+    const missing = toAdd.filter((id) => !currentSet.has(id));
+
+    if (missing.length === 0) return;
+
+    const updated = [...current, ...missing];
+    await pool.query(
+      "UPDATE model_preferences SET enabled_models = $1, updated_at = $2 WHERE id = 'global'",
+      [JSON.stringify(updated), Date.now()],
+    );
+    console.log(`[control-plane] Auto-enabled custom models: ${missing.join(", ")}`);
+  } catch (err) {
+    console.error("[control-plane] Failed to sync custom model preferences:", err);
+  }
+}
+
+syncCustomModelPreferences();
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 

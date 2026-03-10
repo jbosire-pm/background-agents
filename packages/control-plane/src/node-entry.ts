@@ -249,11 +249,14 @@ function handleClientConnection(sessionId: string, ws: WsWebSocket): void {
     }
   });
 
-  ws.on("message", (data) => {
+  ws.on("message", async (data) => {
     try {
       const msg = JSON.parse(data.toString());
       if (msg.type === "ping") {
         ws.send(JSON.stringify({ type: "pong" }));
+      }
+      if (msg.type === "subscribe") {
+        await handleClientSubscribe(sessionId, ws);
       }
       if (msg.type === "prompt") {
         const sandboxWs = sandboxWebSockets.get(sessionId);
@@ -269,6 +272,71 @@ function handleClientConnection(sessionId: string, ws: WsWebSocket): void {
   ws.send(JSON.stringify({ type: "connected", sessionId }));
 }
 
+async function handleClientSubscribe(sessionId: string, ws: WsWebSocket): Promise<void> {
+  try {
+    const sessionResult = await pool.query(
+      `SELECT id, title, repo_owner, repo_name, base_branch, branch_name,
+              model, reasoning_effort, status, parent_session_id
+       FROM session_state WHERE id = $1`,
+      [sessionId],
+    );
+
+    const eventsResult = await pool.query(
+      `SELECT id, type, data, message_id, created_at FROM session_events
+       WHERE session_id = $1 ORDER BY created_at, id LIMIT 500`,
+      [sessionId],
+    );
+
+    const participantsResult = await pool.query(
+      `SELECT id, user_id, scm_login, scm_name, role, joined_at
+       FROM session_participants WHERE session_id = $1`,
+      [sessionId],
+    );
+
+    const s = sessionResult.rows[0];
+    const state = s ? {
+      repoOwner: s.repo_owner,
+      repoName: s.repo_name,
+      title: s.title,
+      baseBranch: s.base_branch,
+      branchName: s.branch_name,
+      model: s.model,
+      reasoningEffort: s.reasoning_effort,
+      status: s.status,
+      parentSessionId: s.parent_session_id,
+      sandboxStatus: sandboxWebSockets.has(sessionId) ? "ready" : "stopped",
+      isProcessing: pendingPrompts.has(sessionId),
+    } : null;
+
+    const participant = participantsResult.rows[0];
+
+    const replayEvents = eventsResult.rows.map((e) => ({
+      id: e.id,
+      type: e.type,
+      data: typeof e.data === "string" ? JSON.parse(e.data as string) : e.data,
+      messageId: e.message_id,
+      createdAt: e.created_at,
+    }));
+
+    ws.send(JSON.stringify({
+      type: "subscribed",
+      state,
+      participantId: participant?.id ?? null,
+      participant: participant ? {
+        id: participant.id,
+        userId: participant.user_id,
+        scmLogin: participant.scm_login,
+        scmName: participant.scm_name,
+        role: participant.role,
+      } : null,
+      replay: { events: replayEvents },
+    }));
+  } catch (err) {
+    console.error(`[ws] Failed to handle subscribe for ${sessionId}:`, err);
+    ws.send(JSON.stringify({ type: "error", message: "Failed to load session" }));
+  }
+}
+
 function handleSandboxConnection(sessionId: string, ws: WsWebSocket): void {
   console.log(`[ws] Sandbox connected for session ${sessionId}`);
   sandboxWebSockets.set(sessionId, ws);
@@ -278,6 +346,34 @@ function handleSandboxConnection(sessionId: string, ws: WsWebSocket): void {
     sandboxWebSockets.delete(sessionId);
     broadcastToClients(sessionId, { type: "sandbox_status", status: "stopped" });
     console.log(`[ws] Sandbox disconnected for session ${sessionId}`);
+
+    pool.query(
+      "SELECT id, content, author_id FROM session_messages WHERE session_id = $1 AND status IN ('pending', 'processing') LIMIT 1",
+      [sessionId],
+    ).then((result) => {
+      if (result.rows.length === 0) return;
+      const msg = result.rows[0];
+      console.log(`[session:${sessionId}] Re-spawning sandbox for orphaned message ${msg.id}`);
+      return pool.query(
+        "SELECT model, reasoning_effort FROM session_state WHERE id = $1",
+        [sessionId],
+      ).then((sResult) => {
+        const s = sResult.rows[0];
+        const authToken = crypto.randomUUID();
+        pendingPrompts.set(sessionId, {
+          messageId: msg.id as string,
+          content: msg.content as string,
+          model: (s?.model ?? "anthropic/claude-sonnet-4-6") as string,
+          reasoningEffort: s?.reasoning_effort as string | undefined,
+          authorId: msg.author_id as string,
+          authToken,
+        });
+        broadcastToClients(sessionId, { type: "sandbox_status", status: "spawning" });
+        return spawnSandboxForSession(sessionId, authToken);
+      });
+    }).catch((err) => {
+      console.error(`[session:${sessionId}] Re-spawn failed:`, err);
+    });
   });
 
   ws.on("message", async (data) => {
@@ -305,6 +401,8 @@ function handleSandboxConnection(sessionId: string, ws: WsWebSocket): void {
 
       if (event.type === "heartbeat") return;
 
+      const clientCount = clientWebSockets.get(sessionId)?.size ?? 0;
+      console.log(`[ws] Broadcasting ${event.type} to ${clientCount} client(s) for session ${sessionId}`);
       broadcastToClients(sessionId, { type: "sandbox_event", event });
 
       if (event.type === "execution_complete") {
@@ -315,6 +413,7 @@ function handleSandboxConnection(sessionId: string, ws: WsWebSocket): void {
             [event.success ? "completed" : "failed", Date.now(), messageId],
           );
         }
+        broadcastToClients(sessionId, { type: "processing_status", isProcessing: false });
       }
 
       if (event.type === "token" && event.messageId) {
@@ -372,6 +471,56 @@ async function syncCustomModelPreferences(): Promise<void> {
 }
 
 syncCustomModelPreferences();
+
+// ─── Orphaned prompt recovery ────────────────────────────────────────────────
+
+async function recoverOrphanedPrompts(): Promise<void> {
+  try {
+    const result = await pool.query(
+      `SELECT m.session_id, m.id as message_id, m.content, m.author_id,
+              s.model, s.reasoning_effort
+       FROM session_messages m
+       JOIN session_state s ON s.id = m.session_id
+       WHERE m.status IN ('pending', 'processing')
+         AND m.created_at > $1
+       ORDER BY m.created_at ASC`,
+      [Date.now() - 30 * 60 * 1000],
+    );
+
+    await pool.query(
+      `UPDATE session_messages SET status = 'failed', error_message = 'Orphaned after restart'
+       WHERE status IN ('pending', 'processing') AND created_at <= $1`,
+      [Date.now() - 30 * 60 * 1000],
+    );
+
+    if (result.rows.length === 0) return;
+
+    console.log(`[control-plane] Recovering ${result.rows.length} orphaned prompt(s)`);
+
+    for (const row of result.rows) {
+      const sid = row.session_id as string;
+      if (sandboxWebSockets.has(sid)) continue;
+
+      const authToken = crypto.randomUUID();
+      pendingPrompts.set(sid, {
+        messageId: row.message_id as string,
+        content: row.content as string,
+        model: row.model as string,
+        reasoningEffort: row.reasoning_effort as string | undefined,
+        authorId: row.author_id as string,
+        authToken,
+      });
+
+      spawnSandboxForSession(sid, authToken).catch((err) => {
+        console.error(`[session:${sid}] Recovery spawn failed:`, err);
+      });
+    }
+  } catch (err) {
+    console.error("[control-plane] Failed to recover orphaned prompts:", err);
+  }
+}
+
+setTimeout(recoverOrphanedPrompts, 5000);
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 

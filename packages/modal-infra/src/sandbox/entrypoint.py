@@ -334,7 +334,7 @@ class SandboxSupervisor:
         # Model format is "provider/model", e.g. "anthropic/claude-sonnet-4-6"
         provider = self.session_config.get("provider", "anthropic")
         model = self.session_config.get("model", "claude-sonnet-4-6")
-        opencode_config = {
+        opencode_config: dict = {
             "model": f"{provider}/{model}",
             "permission": {
                 "*": {
@@ -342,6 +342,20 @@ class SandboxSupervisor:
                 },
             },
         }
+
+        # Merge user-supplied OpenCode config (providers, MCP, etc.) from env.
+        # Set OPENCODE_USER_CONFIG as a JSON string in docker-compose or .env.
+        user_opencode_config = os.environ.get("OPENCODE_USER_CONFIG")
+        if user_opencode_config:
+            try:
+                user_cfg = json.loads(user_opencode_config)
+                for key, val in user_cfg.items():
+                    if isinstance(val, dict) and isinstance(opencode_config.get(key), dict):
+                        opencode_config[key].update(val)
+                    else:
+                        opencode_config[key] = val
+            except json.JSONDecodeError:
+                self.log.warn("opencode.invalid_user_config")
 
         # Determine working directory - use repo path if cloned, otherwise /workspace
         workdir = self.workspace_path

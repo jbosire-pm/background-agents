@@ -13,9 +13,28 @@ type PgPool = {
   query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
 };
 
-function translatePlaceholders(query: string): string {
+function translateQuery(query: string): string {
+  let q = query;
+
+  // INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
+  q = q.replace(/INSERT\s+OR\s+IGNORE\s+INTO/gi, "INSERT INTO");
+  const isInsertOrIgnore = /INSERT\s+OR\s+IGNORE/i.test(query);
+
+  // INSERT OR REPLACE → handled via ON CONFLICT DO UPDATE (caller should use proper upsert)
+  q = q.replace(/INSERT\s+OR\s+REPLACE\s+INTO/gi, "INSERT INTO");
+
+  // SQLite unixepoch() → PostgreSQL EXTRACT(EPOCH FROM NOW())
+  q = q.replace(/unixepoch\(\)/gi, "EXTRACT(EPOCH FROM NOW())::BIGINT");
+
+  // Translate ? placeholders to $1, $2, ...
   let index = 0;
-  return query.replace(/\?/g, () => `$${++index}`);
+  q = q.replace(/\?/g, () => `$${++index}`);
+
+  if (isInsertOrIgnore && !q.includes("ON CONFLICT")) {
+    q = q.replace(/;?\s*$/, " ON CONFLICT DO NOTHING");
+  }
+
+  return q;
 }
 
 class PostgresStatement {
@@ -30,13 +49,13 @@ class PostgresStatement {
   }
 
   async all<T = Record<string, unknown>>(): Promise<{ results: T[]; success: boolean }> {
-    const pgQuery = translatePlaceholders(this.query);
+    const pgQuery = translateQuery(this.query);
     const result = await this.pool.query(pgQuery, this.values);
     return { results: result.rows as T[], success: true };
   }
 
   async first<T = Record<string, unknown>>(column?: string): Promise<T | null> {
-    const pgQuery = translatePlaceholders(this.query);
+    const pgQuery = translateQuery(this.query);
     const result = await this.pool.query(pgQuery, this.values);
     if (result.rows.length === 0) return null;
     if (column) return (result.rows[0] as Record<string, unknown>)[column] as T;
@@ -44,7 +63,7 @@ class PostgresStatement {
   }
 
   async run<T = Record<string, unknown>>(): Promise<{ results: T[]; success: boolean }> {
-    const pgQuery = translatePlaceholders(this.query);
+    const pgQuery = translateQuery(this.query);
     const result = await this.pool.query(pgQuery, this.values);
     return { results: result.rows as T[], success: true };
   }
@@ -64,7 +83,7 @@ export class PostgresDatabaseAdapter {
       .filter((s) => s.length > 0);
 
     for (const statement of statements) {
-      await this.pool.query(translatePlaceholders(statement));
+      await this.pool.query(translateQuery(statement));
     }
   }
 

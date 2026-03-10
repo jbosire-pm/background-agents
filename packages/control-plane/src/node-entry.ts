@@ -26,6 +26,7 @@ import type http from "node:http";
 import { handleRequest } from "./router";
 import { PostgresDatabaseAdapter } from "./adapters/node/postgres-database";
 import { RedisKeyValueStore } from "./adapters/node/redis-kv";
+import { NodeSessionNamespace } from "./adapters/node/session-manager";
 import type { Env } from "./types";
 import {
   NodeExecutionContext,
@@ -51,6 +52,10 @@ const db = new PostgresDatabaseAdapter(pool);
 const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 const reposCache = new RedisKeyValueStore(redis);
 
+// ─── Session Manager ─────────────────────────────────────────────────────────
+
+const sessionNamespace = new NodeSessionNamespace(pool);
+
 // ─── WebSocket Server ────────────────────────────────────────────────────────
 
 import type { WebSocket as WsWebSocket } from "ws";
@@ -61,7 +66,7 @@ const sessionWebSockets = new Map<string, Set<WsWebSocket>>();
 
 function buildEnv(): Env {
   return {
-    SESSION: {} as Env["SESSION"],
+    SESSION: sessionNamespace as unknown as Env["SESSION"],
     REPOS_CACHE: reposCache as unknown as KVNamespace,
     DB: db as unknown as D1Database,
 

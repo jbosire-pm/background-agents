@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --platform=browser --target=es2022 --external:cloudflare:* --external:node:*",
+    "build:node": "esbuild src/node-entry.ts --bundle --format=esm --outfile=dist/node-entry.js --platform=node --target=node22 --external:ioredis --packages=external",
+    "start:node": "node --import tsx src/node-entry.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
@@ -14,8 +16,10 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
+    "@hono/node-server": "^1.13.8",
     "@open-inspect/shared": "file:../shared",
-    "hono": "^4.12.4"
+    "hono": "^4.12.4",
+    "ioredis": "^5.6.1"
   },
   "devDependencies": {
     "esbuild": "^0.25.1",

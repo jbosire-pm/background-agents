@@ -1,0 +1,42 @@
+[project]
+name = "open-inspect-sandbox-manager"
+version = "0.1.0"
+description = "Docker-based sandbox manager for Open-Inspect (replaces Modal)"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.110.0",
+  "uvicorn>=0.34.0",
+  "docker>=7.1.0",
+  "httpx>=0.27.0",
+  "websockets>=13.0",
+  "pydantic>=2.0",
+  "PyJWT[crypto]>=2.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.9.0",
+  "mypy>=1.14.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+indent-width = 2
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

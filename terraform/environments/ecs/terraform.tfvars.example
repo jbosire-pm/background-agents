@@ -1,0 +1,10 @@
+# Open-Inspect ECS Deployment Variables
+# Copy to terraform.tfvars and fill in values
+
+aws_region         = "us-east-1"
+environment        = "production"
+vpc_id             = "vpc-xxxxxxxxx"
+public_subnet_ids  = ["subnet-aaa", "subnet-bbb"]
+private_subnet_ids = ["subnet-ccc", "subnet-ddd"]
+ecr_registry       = "123456789.dkr.ecr.us-east-1.amazonaws.com"
+db_password        = "change-me-to-a-strong-password"

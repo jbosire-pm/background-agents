@@ -20,7 +20,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # ─── Python packages ─────────────────────────────────────────────────────────
 
 RUN pip install --no-cache-dir \
-  httpx websockets pydantic>=2.0 "PyJWT[crypto]"
+  uv httpx websockets pydantic>=2.0 "PyJWT[crypto]"
 
 # ─── OpenCode CLI ─────────────────────────────────────────────────────────────
 

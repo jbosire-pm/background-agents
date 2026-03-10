@@ -208,8 +208,8 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
           if (data.state) {
             setSessionState({
               ...data.state,
-              // Backward-compatible default for older sessions that may omit this.
               isProcessing: data.state.isProcessing ?? false,
+              mcpServers: data.mcpServers ?? [],
             });
           }
           // Store the current user's participant ID and info for author attribution

@@ -111,6 +111,29 @@ async function spawnSandboxForSession(sessionId: string, authToken: string): Pro
     const { extractProviderAndModel, generateInternalToken } = await import("@open-inspect/shared");
     const { provider, model } = extractProviderAndModel(s.model as string);
 
+    const mcpResult = await pool.query(
+      "SELECT id, name, type, url, command, environment FROM mcp_servers WHERE enabled = 1",
+    );
+    const dbMcpConfig: Record<string, unknown> = {};
+    for (const row of mcpResult.rows) {
+      const entry: Record<string, unknown> = { type: row.type };
+      if (row.url) entry.url = row.url;
+      if (row.command) entry.command = JSON.parse(row.command as string);
+      if (row.environment) entry.environment = JSON.parse(row.environment as string);
+      dbMcpConfig[row.name as string] = entry;
+    }
+
+    const userEnvVars: Record<string, string> = {};
+    if (Object.keys(dbMcpConfig).length > 0) {
+      const envConfig = process.env.OPENCODE_USER_CONFIG;
+      const existing = envConfig ? JSON.parse(envConfig) : {};
+      const merged = {
+        ...existing,
+        mcp: { ...(existing.mcp ?? {}), ...dbMcpConfig },
+      };
+      userEnvVars["OPENCODE_USER_CONFIG"] = JSON.stringify(merged);
+    }
+
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     const secret = process.env.INTERNAL_CALLBACK_SECRET;
     if (secret) {
@@ -131,6 +154,7 @@ async function spawnSandboxForSession(sessionId: string, authToken: string): Pro
         model,
         provider,
         branch: s.base_branch,
+        user_env_vars: userEnvVars,
       }),
     });
 
@@ -308,6 +332,17 @@ async function handleClientSubscribe(sessionId: string, ws: WsWebSocket): Promis
       isProcessing: pendingPrompts.has(sessionId),
     } : null;
 
+    const mcpResult = await pool.query(
+      "SELECT id, name, type, url, enabled FROM mcp_servers ORDER BY name",
+    );
+    const mcpServers = mcpResult.rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      url: r.url,
+      enabled: r.enabled === 1,
+    }));
+
     const participant = participantsResult.rows[0];
 
     const replayEvents = eventsResult.rows.map((e) => {
@@ -334,6 +369,7 @@ async function handleClientSubscribe(sessionId: string, ws: WsWebSocket): Promis
         role: participant.role,
       } : null,
       replay: { events: replayEvents },
+      mcpServers,
     }));
   } catch (err) {
     console.error(`[ws] Failed to handle subscribe for ${sessionId}:`, err);
@@ -476,6 +512,50 @@ async function syncCustomModelPreferences(): Promise<void> {
 }
 
 syncCustomModelPreferences();
+
+// ─── Seed MCP servers from OPENCODE_USER_CONFIG ──────────────────────────────
+
+async function seedMcpServersFromEnv(): Promise<void> {
+  const raw = process.env.OPENCODE_USER_CONFIG;
+  if (!raw) return;
+
+  try {
+    const config = JSON.parse(raw);
+    const mcpEntries = config.mcp;
+    if (!mcpEntries || typeof mcpEntries !== "object") return;
+
+    const existing = await pool.query("SELECT name FROM mcp_servers");
+    const existingNames = new Set(existing.rows.map((r) => r.name as string));
+
+    const toInsert = Object.entries(mcpEntries).filter(([name]) => !existingNames.has(name));
+    if (toInsert.length === 0) return;
+
+    for (const [name, cfg] of toInsert) {
+      const c = cfg as Record<string, unknown>;
+      const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+      const now = Date.now();
+      await pool.query(
+        `INSERT INTO mcp_servers (id, name, type, url, command, environment, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $7)`,
+        [
+          id,
+          name,
+          c.type ?? "remote",
+          c.url ?? null,
+          c.command ? JSON.stringify(c.command) : null,
+          c.environment ? JSON.stringify(c.environment) : null,
+          now,
+        ],
+      );
+    }
+
+    console.log(`[control-plane] Seeded MCP servers from config: ${toInsert.map(([n]) => n).join(", ")}`);
+  } catch (err) {
+    console.error("[control-plane] Failed to seed MCP servers:", err);
+  }
+}
+
+seedMcpServersFromEnv();
 
 // ─── Orphaned prompt recovery ────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ import {
   KeyboardIcon,
   DataControlsIcon,
   IntegrationsIcon,
+  BoltIcon,
   ChevronRightIcon,
 } from "@/components/ui/icons";
 
@@ -21,6 +22,11 @@ const NAV_ITEMS = [
     id: "models",
     label: "Models",
     icon: ModelIcon,
+  },
+  {
+    id: "mcp",
+    label: "MCP Servers",
+    icon: BoltIcon,
   },
   {
     id: "images",

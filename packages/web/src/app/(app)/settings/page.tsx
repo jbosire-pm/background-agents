@@ -10,6 +10,7 @@ import { DataControlsSettings } from "@/components/settings/data-controls-settin
 import { KeyboardShortcutsSettings } from "@/components/settings/keyboard-shortcuts-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
 import { ImagesSettings } from "@/components/settings/images-settings";
+import { McpSettings } from "@/components/settings/mcp-settings";
 import { SHORTCUT_LABELS } from "@/lib/keyboard-shortcuts";
 import { SidebarIcon, BackIcon } from "@/components/ui/icons";
 import { useIsMobile } from "@/hooks/use-media-query";
@@ -17,6 +18,7 @@ import { useIsMobile } from "@/hooks/use-media-query";
 const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   secrets: "Secrets",
   models: "Models",
+  mcp: "MCP Servers",
   images: "Images",
   "keyboard-shortcuts": "Keyboard",
   "data-controls": "Data Controls",
@@ -26,6 +28,7 @@ const CATEGORY_LABELS: Record<SettingsCategory, string> = {
 const VALID_CATEGORIES = new Set<string>([
   "secrets",
   "models",
+  "mcp",
   "images",
   "keyboard-shortcuts",
   "data-controls",
@@ -59,6 +62,7 @@ export default function SettingsPage() {
     <>
       {activeCategory === "secrets" && <SecretsSettings />}
       {activeCategory === "models" && <ModelsSettings />}
+      {activeCategory === "mcp" && <McpSettings />}
       {activeCategory === "images" && <ImagesSettings />}
       {activeCategory === "keyboard-shortcuts" && <KeyboardShortcutsSettings />}
       {activeCategory === "data-controls" && <DataControlsSettings />}

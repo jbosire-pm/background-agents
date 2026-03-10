@@ -269,6 +269,7 @@ export type ServerMessage =
         cursor: { timestamp: number; id: string } | null;
       };
       spawnError?: string | null;
+      mcpServers?: { id: string; name: string; type: string; url?: string | null; enabled: boolean }[];
     }
   | { type: "prompt_queued"; messageId: string; position: number }
   | { type: "sandbox_event"; event: SandboxEvent }
@@ -319,6 +320,7 @@ export interface SessionState {
   reasoningEffort?: string;
   isProcessing?: boolean;
   parentSessionId?: string | null;
+  mcpServers?: { id: string; name: string; type: string; url?: string | null; enabled: boolean }[];
 }
 
 // Participant presence info

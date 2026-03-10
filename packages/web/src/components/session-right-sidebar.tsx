@@ -8,6 +8,7 @@ import {
   TasksSection,
   FilesChangedSection,
 } from "./sidebar";
+import { GlobeIcon, TerminalIcon } from "@/components/ui/icons";
 import { ChildSessionsSection } from "./sidebar/child-sessions-section";
 import { extractLatestTasks } from "@/lib/tasks";
 import { extractChangedFiles } from "@/lib/files";
@@ -80,6 +81,27 @@ export function SessionRightSidebarContent({
       {filesChanged.length > 0 && (
         <CollapsibleSection title="Files changed" defaultOpen={true}>
           <FilesChangedSection files={filesChanged} />
+        </CollapsibleSection>
+      )}
+
+      {/* MCP Servers */}
+      {sessionState.mcpServers && sessionState.mcpServers.length > 0 && (
+        <CollapsibleSection title="MCP Servers" defaultOpen={false}>
+          <div className="space-y-1">
+            {sessionState.mcpServers.map((server: { id: string; name: string; type: string; url?: string | null; enabled: boolean }) => (
+              <div key={server.id} className="flex items-center gap-2 px-1 py-1">
+                {server.type === "remote" ? (
+                  <GlobeIcon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                ) : (
+                  <TerminalIcon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                )}
+                <span className="text-xs text-foreground">{server.name}</span>
+                <span className={`ml-auto text-xs ${server.enabled ? "text-green-500" : "text-muted-foreground"}`}>
+                  {server.enabled ? "active" : "disabled"}
+                </span>
+              </div>
+            ))}
+          </div>
         </CollapsibleSection>
       )}
 

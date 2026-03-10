@@ -205,6 +205,26 @@ class NodeSessionStub {
       [this.sessionName, now],
     );
 
+    const eventId = crypto.randomUUID().slice(0, 12);
+    await this.pool.query(
+      `INSERT INTO session_events (id, session_id, type, data, message_id, created_at)
+       VALUES ($1, $2, 'user_message', $3, $4, $5)`,
+      [
+        eventId,
+        this.sessionName,
+        JSON.stringify({
+          type: "user_message",
+          content: body.content,
+          authorId: body.authorId ?? "anonymous",
+          source: body.source ?? "web",
+          messageId,
+          timestamp: now / 1000,
+        }),
+        messageId,
+        now,
+      ],
+    );
+
     const sessionRow = await this.pool.query(
       "SELECT model, reasoning_effort FROM session_state WHERE id = $1",
       [this.sessionName],

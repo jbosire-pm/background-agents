@@ -111,6 +111,8 @@ def create_sandbox(
   if github_token:
     env["VCS_CLONE_TOKEN"] = github_token
     env["GITHUB_APP_TOKEN"] = github_token
+    env["GITHUB_TOKEN"] = github_token
+    env["GH_TOKEN"] = github_token
 
   if branch:
     env["BRANCH"] = branch

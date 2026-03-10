@@ -416,11 +416,12 @@ function handleSandboxConnection(sessionId: string, ws: WsWebSocket): void {
         broadcastToClients(sessionId, { type: "processing_status", isProcessing: false });
       }
 
-      if (event.type === "token" && event.messageId) {
+      const persistTypes = ["token", "step_start", "step_finish", "tool_call", "tool_result", "execution_complete", "error", "user_message", "git_sync", "artifact"];
+      if (persistTypes.includes(event.type)) {
         await pool.query(
           `INSERT INTO session_events (id, session_id, type, data, message_id, created_at)
-           VALUES ($1, $2, 'token', $3, $4, $5)`,
-          [crypto.randomUUID().slice(0, 12), sessionId, JSON.stringify(event), event.messageId, Date.now()],
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [crypto.randomUUID().slice(0, 12), sessionId, event.type, JSON.stringify(event), event.messageId ?? null, Date.now()],
         );
       }
     } catch {

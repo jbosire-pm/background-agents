@@ -310,13 +310,17 @@ async function handleClientSubscribe(sessionId: string, ws: WsWebSocket): Promis
 
     const participant = participantsResult.rows[0];
 
-    const replayEvents = eventsResult.rows.map((e) => ({
-      id: e.id,
-      type: e.type,
-      data: typeof e.data === "string" ? JSON.parse(e.data as string) : e.data,
-      messageId: e.message_id,
-      createdAt: e.created_at,
-    }));
+    const replayEvents = eventsResult.rows.map((e) => {
+      const data = typeof e.data === "string" ? JSON.parse(e.data as string) : e.data;
+      return {
+        ...data,
+        id: e.id,
+        type: e.type,
+        messageId: e.message_id ?? data?.messageId,
+        createdAt: e.created_at,
+        timestamp: data?.timestamp ?? (e.created_at as number) / 1000,
+      };
+    });
 
     ws.send(JSON.stringify({
       type: "subscribed",

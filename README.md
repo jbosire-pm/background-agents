@@ -62,66 +62,79 @@ built for internal use where all employees are trusted and have access to compan
 
 ## Architecture
 
+Open-Inspect supports two deployment modes. The self-hosted Docker path is the simplest way to get
+started:
+
 ```
-                                    ┌──────────────────┐
-                                    │     Clients      │
-                                    │ ┌──────────────┐ │
-                                    │ │     Web      │ │
-                                    │ │    Slack     │ │
-                                    │ │   Extension  │ │
-                                    │ └──────────────┘ │
-                                    └────────┬─────────┘
-                                             │
-                                             ▼
-┌────────────────────────────────────────────────────────────────────┐
-│                     Control Plane (Cloudflare)                      │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                   Durable Objects (per session)               │  │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌───────────────┐   │  │
-│  │  │ SQLite  │  │WebSocket│  │  Event  │  │   GitHub      │   │  │
-│  │  │   DB    │  │   Hub   │  │ Stream  │  │ Integration   │   │  │
-│  │  └─────────┘  └─────────┘  └─────────┘  └───────────────┘   │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              D1 Database (repo-scoped secrets)                │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────┬───────────────────────────────────┘
-                                 │
-                                 ▼
-┌────────────────────────────────────────────────────────────────────┐
-│                      Data Plane (Modal)                             │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                     Session Sandbox                           │  │
-│  │  ┌───────────┐  ┌───────────┐  ┌───────────┐                 │  │
-│  │  │ Supervisor│──│  OpenCode │──│   Bridge  │─────────────────┼──┼──▶ Control Plane
-│  │  └───────────┘  └───────────┘  └───────────┘                 │  │
-│  │                      │                                        │  │
-│  │              Full Dev Environment                             │  │
-│  │        (Node.js, Python, git, Playwright)                     │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              Clients                                     │
+│                    ┌───────────┬───────────┐                            │
+│                    │    Web    │   Slack   │                            │
+│                    └─────┬─────┴─────┬─────┘                            │
+│                          │           │                                   │
+└──────────────────────────┼───────────┼───────────────────────────────────┘
+                           │           │
+                           ▼           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Control Plane (Node.js)                                │
+│  ┌──────────────┐  ┌───────────┐  ┌────────────┐  ┌────────────────┐   │
+│  │  PostgreSQL  │  │ WebSocket │  │   Event    │  │    Sandbox     │   │
+│  │    State     │  │    Hub    │  │   Stream   │  │   Lifecycle    │   │
+│  └──────────────┘  └───────────┘  └────────────┘  └────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │              Redis (sessions index, repo metadata)                │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                  Sandbox Manager (FastAPI + Docker)                       │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                        Session Sandbox                              │ │
+│  │  ┌────────────┐    ┌────────────┐    ┌────────────┐               │ │
+│  │  │ Supervisor │───▶│  OpenCode  │───▶│   Bridge   │───────────────┼─┼──▶ Control Plane
+│  │  └────────────┘    └────────────┘    └────────────┘               │ │
+│  │                           │                                        │ │
+│  │                    Full Dev Environment                            │ │
+│  │              (Node.js, Python, git, Playwright)                    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+For the cloud-native deployment on Cloudflare Workers + Modal, see
+[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 
 ## Packages
 
-| Package                                 | Description                          |
-| --------------------------------------- | ------------------------------------ |
-| [modal-infra](packages/modal-infra)     | Modal sandbox infrastructure         |
-| [control-plane](packages/control-plane) | Cloudflare Workers + Durable Objects |
-| [web](packages/web)                     | Next.js web client                   |
-| [shared](packages/shared)               | Shared types and utilities           |
+| Package                                     | Description                                                 |
+| ------------------------------------------- | ----------------------------------------------------------- |
+| [control-plane](packages/control-plane)     | Session management, WebSocket streaming, GitHub integration |
+| [web](packages/web)                         | Next.js web client                                          |
+| [shared](packages/shared)                   | Shared types and utilities                                  |
+| [sandbox-manager](packages/sandbox-manager) | Docker-based sandbox manager (self-hosted)                  |
+| [sandbox-image](packages/sandbox-image)     | Base Docker image for sandboxed environments                |
+| [modal-infra](packages/modal-infra)         | Modal sandbox infrastructure (cloud-native)                 |
+| [slack-bot](packages/slack-bot)             | Slack event handler, session creation                       |
+| [github-bot](packages/github-bot)           | PR review and @mention webhook handler                      |
+| [linear-bot](packages/linear-bot)           | Linear agent webhook handler                                |
 
 ## Getting Started
 
-For a practical setup guide (local + contributor + deployment paths), start with
-**[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)**.
+Open-Inspect supports two deployment modes:
 
-See **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** for deployment instructions.
+- **Self-hosted** (Docker Compose or AWS ECS) — see **[DEPLOY.md](DEPLOY.md)**
+- **Cloud-native** (Cloudflare Workers + Modal + Vercel) — see
+  **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)**
+
+For a practical setup guide covering local, contributor, and deployment paths, start with
+**[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)**.
 
 To understand the architecture and core concepts, read
 **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)**.
 
 To set up recurring scheduled tasks, see **[docs/AUTOMATIONS.md](docs/AUTOMATIONS.md)**.
+
+For contribution guidelines, see **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## Key Features
 
@@ -155,12 +168,13 @@ await configureGitIdentity({
 
 ### Multi-Provider Model Support
 
-Choose the AI model that fits your task — Anthropic Claude or OpenAI Codex:
+Choose the AI model that fits your task:
 
-| Provider  | Models                                |
-| --------- | ------------------------------------- |
-| Anthropic | Claude Haiku, Sonnet, Opus            |
-| OpenAI    | GPT 5.2, GPT 5.2 Codex, GPT 5.3 Codex |
+| Provider     | Models                                  |
+| ------------ | --------------------------------------- |
+| Anthropic    | Claude family (Haiku, Sonnet, Opus)     |
+| OpenAI       | GPT family (GPT, Codex variants)        |
+| OpenCode Zen | Third-party models (Kimi, MiniMax, GLM) |
 
 OpenAI models work with your existing ChatGPT subscription — no separate API key needed. See
 **[docs/OPENAI_MODELS.md](docs/OPENAI_MODELS.md)** for setup instructions.
